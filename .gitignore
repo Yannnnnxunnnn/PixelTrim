@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Compression output directories
+*_compressed/
+compressed/
+
+.DS_Store
