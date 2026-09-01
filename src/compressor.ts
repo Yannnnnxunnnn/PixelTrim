@@ -10,6 +10,8 @@ import type {
   QualityChoice,
 } from "./models.ts";
 import { encodeJpeg, type MozjpegDecoder, type MozjpegEncoder } from "./mozjpeg.ts";
+import { encodePng } from "./oxipng.ts";
+import { findBestPngQuality } from "./png-quality-search.ts";
 import type { QualitySearchResult } from "./quality-search-core.ts";
 import { findBestQuality } from "./quality-search.ts";
 import { encodeWebp } from "./sharp-webp.ts";
@@ -18,7 +20,7 @@ import { findBestWebpQuality } from "./webp-quality-search.ts";
 const MAX_NAME_ATTEMPTS = 1000;
 
 export interface CompressRequest extends CompressionOptions {
-  /** MozJPEG encoder. Needed for JPEG input only; WebP is encoded by sharp. */
+  /** MozJPEG encoder. Needed for JPEG input only; WebP and PNG use other engines. */
   readonly encoder: MozjpegEncoder | null;
   /** MozJPEG decoder. Needed for JPEG input only, when the quality is automatic. */
   readonly decoder: MozjpegDecoder | null;
@@ -38,7 +40,7 @@ export async function compressImage(
 
   try {
     originalSize = await fileSize(file.inputPath);
-    outputPath = await resolveOutputPath(request.outputDir, file.filename);
+    outputPath = await resolveOutputPath(request.outputDir, file.relativePath);
 
     const encoded = await encodeToOutput(file, request, outputPath);
 
@@ -52,7 +54,7 @@ export async function compressImage(
 
     return {
       success: true,
-      filename: file.filename,
+      filename: file.relativePath,
       inputPath: file.inputPath,
       outputPath,
       quality: encoded.quality,
@@ -72,7 +74,7 @@ export async function compressImage(
     }
     return {
       success: false,
-      filename: file.filename,
+      filename: file.relativePath,
       inputPath: file.inputPath,
       outputPath,
       originalSize,
@@ -92,9 +94,39 @@ async function encodeToOutput(
   request: CompressRequest,
   outputPath: string,
 ): Promise<EncodeOutcome> {
-  return file.format === "webp"
-    ? encodeWebpToOutput(file, request, outputPath)
-    : encodeJpegToOutput(file, request, outputPath);
+  switch (file.format) {
+    case "webp":
+      return encodeWebpToOutput(file, request, outputPath);
+    case "png":
+      return encodePngToOutput(file, request, outputPath);
+    case "jpeg":
+      return encodeJpegToOutput(file, request, outputPath);
+  }
+}
+
+/**
+ * PNG path: oxipng is always tried losslessly. Quality below 100 also tries
+ * palette quantization, and automatic search measures that the same way as
+ * JPEG and WebP.
+ */
+async function encodePngToOutput(
+  file: ImageFile,
+  request: CompressRequest,
+  outputPath: string,
+): Promise<EncodeOutcome> {
+  if (request.quality.mode === "fixed") {
+    const encoded = await encodePng({
+      inputPath: file.inputPath,
+      outputPath,
+      quality: request.quality.quality,
+    });
+    return { quality: encoded.quality, qualityChoice: null };
+  }
+
+  const { maxQuality, minSsim } = request.quality;
+  return searchQuality(outputPath, (workDir) =>
+    findBestPngQuality({ inputPath: file.inputPath, maxQuality, minSsim, workDir }),
+  );
 }
 
 /** JPEG path: MozJPEG encodes, and its own `djpeg` decodes for `--auto`. */
@@ -213,22 +245,27 @@ export async function ensureOutputDirectory(outputDir: string): Promise<void> {
 
 /**
  * Picks a free path inside the output directory, appending `-1`, `-2`, ... so an
- * existing file is never overwritten.
+ * existing file is never overwritten. Nested relative paths are recreated under
+ * the output directory; image names stay the same as the source.
  */
-async function resolveOutputPath(outputDir: string, filename: string): Promise<string> {
+async function resolveOutputPath(outputDir: string, relativePath: string): Promise<string> {
+  const destDir = path.join(outputDir, path.dirname(relativePath));
+  await ensureOutputDirectory(destDir);
+
+  const filename = path.basename(relativePath);
   const extension = path.extname(filename);
   const baseName = filename.slice(0, filename.length - extension.length);
 
   for (let attempt = 0; attempt < MAX_NAME_ATTEMPTS; attempt += 1) {
     const candidateName = attempt === 0 ? filename : `${baseName}-${attempt}${extension}`;
-    const candidate = path.join(outputDir, candidateName);
+    const candidate = path.join(destDir, candidateName);
     if (!(await exists(candidate))) {
       return candidate;
     }
   }
 
   throw new AppError(
-    `Could not find an unused output name for "${filename}" in "${outputDir}" after ${MAX_NAME_ATTEMPTS} attempts.`,
+    `Could not find an unused output name for "${filename}" in "${destDir}" after ${MAX_NAME_ATTEMPTS} attempts.`,
   );
 }
 

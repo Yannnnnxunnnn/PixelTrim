@@ -18,6 +18,7 @@ import {
   type MozjpegDecoder,
   type MozjpegEncoder,
 } from "./mozjpeg.ts";
+import { describePngEncoder, type PngEncoder } from "./oxipng.ts";
 import { describeWebpEncoder, type WebpEncoder } from "./sharp-webp.ts";
 import { formatBytes, formatPercentage, formatSignedBytes } from "./utils/file-size.ts";
 
@@ -45,19 +46,21 @@ interface JpegEngine {
 /** The engines a run needs. Each is null when no input file uses that format. */
 interface Engines {
   readonly jpeg: JpegEngine | null;
+  readonly png: PngEncoder | null;
   readonly webp: WebpEncoder | null;
 }
 
-const USAGE = `PixelTrim - JPEG compression with MozJPEG, WebP compression with sharp
+const USAGE = `PixelTrim - JPEG compression with MozJPEG, PNG compression with oxipng, WebP compression with sharp
 
 Usage:
   npm run start -- <file-or-directory> [options]
 
-Each image keeps its format: .jpg and .jpeg are re-encoded with MozJPEG, .webp
-with sharp's WebP encoder.
+Each image keeps its format: .jpg and .jpeg are re-encoded with MozJPEG, .png
+with oxipng, .webp with sharp's WebP encoder.
 
 By default the quality is chosen per image: the lowest value that still looks
-like the original, up to ${DEFAULT_QUALITY}. Pass --quality to use a fixed value instead.
+like the original, up to ${DEFAULT_QUALITY}. Pass --quality for a fixed value.
+PNG also tries a lossless oxipng pass and keeps that when it is smaller.
 
 Options:
   --quality <1-100>   Use this exact quality instead of choosing one. With
@@ -71,6 +74,7 @@ Options:
 
 Examples:
   npm run start -- photo.jpg
+  npm run start -- icon.png
   npm run start -- banner.webp
   npm run start -- ./photos/ --min-ssim 0.99
   npm run start -- photo.jpg --quality 75
@@ -110,15 +114,17 @@ async function main(argv: readonly string[]): Promise<number> {
 }
 
 /**
- * Prepares only the engines the input actually needs, so a run of WebP images
- * does not require MozJPEG to be installed, and vice versa.
+ * Prepares only the engines the input actually needs, so a run of WebP or PNG
+ * images does not require MozJPEG to be installed, and vice versa.
  */
 async function locateEngines(files: readonly ImageFile[], auto: boolean): Promise<Engines> {
   const hasJpeg = files.some((file) => file.format === "jpeg");
+  const hasPng = files.some((file) => file.format === "png");
   const hasWebp = files.some((file) => file.format === "webp");
 
   return {
     jpeg: hasJpeg ? await locateJpegEngine(auto) : null,
+    png: hasPng ? describePngEncoder() : null,
     webp: hasWebp ? describeWebpEncoder() : null,
   };
 }
@@ -260,6 +266,9 @@ function printHeader(
   if (engines.jpeg !== null) {
     console.log(`${field("JPEG:")}${describeJpegEngine(engines.jpeg.encoder)}`);
   }
+  if (engines.png !== null) {
+    console.log(`${field("PNG:")}${describePngEngine(engines.png)}`);
+  }
   if (engines.webp !== null) {
     console.log(`${field("WebP:")}${describeWebpEngine(engines.webp)}`);
   }
@@ -275,18 +284,34 @@ function describeJpegEngine(encoder: MozjpegEncoder): string {
   return `${encoder.executablePath}${version}`;
 }
 
+function describePngEngine(encoder: PngEncoder): string {
+  const version = encoder.version === null ? "" : ` ${encoder.version}`;
+  return `oxipng (@napi-rs/image${version})`;
+}
+
 function describeWebpEngine(encoder: WebpEncoder): string {
   const version = encoder.version === null ? "" : ` ${encoder.version}`;
   const libwebp = encoder.libwebpVersion === null ? "" : ` (libwebp ${encoder.libwebpVersion})`;
   return `sharp${version}${libwebp}`;
 }
 
-/** `3 images`, or `3 images (2 JPEG, 1 WebP)` when a run mixes formats. */
+/** `3 images`, or `3 images (1 JPEG, 1 PNG, 1 WebP)` when a run mixes formats. */
 function describeImageCount(files: readonly ImageFile[]): string {
   const noun = files.length === 1 ? "image" : "images";
+  const parts: string[] = [];
   const jpeg = files.filter((file) => file.format === "jpeg").length;
-  const webp = files.length - jpeg;
-  const breakdown = jpeg && webp ? ` (${jpeg} JPEG, ${webp} WebP)` : "";
+  const png = files.filter((file) => file.format === "png").length;
+  const webp = files.filter((file) => file.format === "webp").length;
+  if (jpeg) {
+    parts.push(`${jpeg} JPEG`);
+  }
+  if (png) {
+    parts.push(`${png} PNG`);
+  }
+  if (webp) {
+    parts.push(`${webp} WebP`);
+  }
+  const breakdown = parts.length > 1 ? ` (${parts.join(", ")})` : "";
 
   return `${files.length} ${noun}${breakdown}`;
 }

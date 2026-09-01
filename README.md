@@ -1,26 +1,27 @@
 # PixelTrim
 
-A command-line tool that compresses JPEG and WebP images locally. Each file stays in the format it came in as.
+A command-line tool that compresses JPEG, PNG and WebP images locally. Each file stays in the format it came in as.
 
 ## Formats
 
 | Input | Engine | Output |
 | --- | --- | --- |
 | `.jpg`, `.jpeg` | [MozJPEG](https://github.com/mozilla/mozjpeg) (`cjpeg`) | JPEG |
+| `.png` | [oxipng](https://github.com/shssoichiro/oxipng) via [`@napi-rs/image`](https://www.npmjs.com/package/@napi-rs/image) | PNG |
 | `.webp` | [sharp](https://sharp.pixelplumbing.com/)'s native WebP encoder | WebP |
 
-JPEG needs MozJPEG installed. WebP only needs `npm install`. Mixed directories are fine.
+JPEG needs MozJPEG installed. PNG and WebP only need `npm install`. Mixed directories are fine. PNG is compressed with oxipng. Quality below 100 also tries palette quantization and keeps the smaller file, so `--quality`, `--auto` and `--min-ssim` apply to PNG as well.
 
 ## Requirements
 
 - Node.js 22.6 or newer
 - MozJPEG's `cjpeg` — **only for JPEG** (see below)
 
-WebP needs nothing extra: sharp is installed by `npm install`.
+PNG and WebP need nothing extra: oxipng and sharp are installed by `npm install`.
 
 ## Installing MozJPEG
 
-MozJPEG is **not** installed by `npm install`. Skip this section if you only compress WebP.
+MozJPEG is **not** installed by `npm install`. Skip this section if you only compress PNG or WebP.
 
 > **`cjpeg` from libjpeg or libjpeg-turbo is not a substitute.** PixelTrim checks the encoder and refuses a plain libjpeg-turbo build.
 
@@ -82,11 +83,11 @@ npm install
 npm run start -- <file-or-directory> [options]
 ```
 
-By default, quality is chosen per image so the result stays visually close to the original. Pass `--quality` for a fixed value.
+By default, quality is chosen per image so the result stays visually close to the original. Pass `--quality` for a fixed value. PNG also tries a lossless oxipng pass and keeps that when it is smaller.
 
 | Option | Description |
 | --- | --- |
-| `--quality <1-100>` | Fixed quality, or the upper bound of automatic search (default `85`) |
+| `--quality <1-100>` | Fixed quality, or the upper bound of automatic search (default `85`). PNG uses 100 for lossless-only. |
 | `--no-auto` | Use a fixed quality (`85` unless `--quality` says otherwise) |
 | `--min-ssim <0-1>` | How similar automatic search must stay to the original, default `0.955` |
 | `--output <dir>` | Output directory. Created if it does not exist. |
@@ -97,8 +98,10 @@ By default, quality is chosen per image so the result stays visually close to th
 
 ```bash
 npm run start -- photo.jpg                                   # quality chosen per image
+npm run start -- icon.png                                    # quality chosen; lossless kept if smaller
 npm run start -- banner.webp                                 # -> banner_compressed/
 npm run start -- ./photos/                                   # -> photos_compressed/
+npm run start -- "./my photos/"                              # quote paths that contain spaces
 npm run start -- ./photos/ --min-ssim 0.99                    # be fussier about quality
 npm run start -- photo.jpg --quality 75                       # fixed quality 75
 npm run start -- ./photos/ --no-auto --output ./out/          # fixed quality 85
@@ -111,20 +114,23 @@ A run never writes a file bigger than the source unless you pass `--allow-larger
 
 ```
 photo.jpg    ->  photo_compressed/photo.jpg
+icon.png     ->  icon_compressed/icon.png
 banner.webp  ->  banner_compressed/banner.webp
 ```
 
 ### Directory
 
-Only `.jpg`, `.jpeg` and `.webp` files directly inside the directory are processed. Subdirectories are not visited.
+`.jpg`, `.jpeg`, `.png` and `.webp` files in the directory and every nested subdirectory are processed. Image names stay the same, including spaces. Only the top-level output folder is named `<input>_compressed`; nested folders keep their original names. If the input path itself contains a space, quote it: `npm run start -- "./my photos/"`.
 
 ```
 photos/                    photos_compressed/
 ├── photo1.jpg      ->     ├── photo1.jpg
-├── photo2.jpg             ├── photo2.jpg
-├── photo3.jpeg            ├── photo3.jpeg
-├── banner.webp            └── banner.webp
-├── document.png    (ignored)
+├── my photo.png    ->     ├── my photo.png
+├── nested/                ├── nested/
+│   ├── photo3.jpeg ->     │   ├── photo3.jpeg
+│   └── deeper/            │   └── deeper/
+│       └── banner.webp -> │       └── banner.webp
+├── document.png    ->     ├── document.png
 └── text.txt        (ignored)
 ```
 

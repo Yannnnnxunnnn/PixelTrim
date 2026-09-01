@@ -7,16 +7,21 @@ import type { ImageFile, ImageFormat, ResolvedInput } from "./models.ts";
 
 const EXTENSIONS: Readonly<Record<ImageFormat, readonly string[]>> = {
   jpeg: [".jpg", ".jpeg"],
+  png: [".png"],
   webp: [".webp"],
 };
 
 const FORMAT_NAMES: Readonly<Record<ImageFormat, string>> = {
   jpeg: "JPEG",
+  png: "PNG",
   webp: "WebP",
 };
 
-/** Every supported extension, for error messages: `.jpg, .jpeg and .webp`. */
+/** Every supported extension, for error messages: `.jpg, .jpeg, .png and .webp`. */
 const SUPPORTED_EXTENSIONS = Object.values(EXTENSIONS).flat();
+
+/** PNG signature: 89 50 4E 47 0D 0A 1A 0A. */
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 /** Bytes needed to recognise any supported format. WebP needs the most, at 12. */
 const SIGNATURE_LENGTH = 12;
@@ -79,29 +84,24 @@ async function resolveFileInput(inputPath: string, inputArgument: string): Promi
 
   return {
     kind: "file",
-    files: [{ inputPath, filename, format }],
+    files: [{ inputPath, relativePath: filename, format }],
     defaultOutputDir: path.join(path.dirname(inputPath), `${baseName}${OUTPUT_DIR_SUFFIX}`),
   };
 }
 
-/** Collects images directly inside the directory; subdirectories are not visited. */
+/** Collects images in the directory and every nested subdirectory. */
 async function resolveDirectoryInput(
   inputPath: string,
   inputArgument: string,
 ): Promise<ResolvedInput> {
-  const entries = await readDirectory(inputPath, inputArgument);
-  const files: ImageFile[] = entries
-    .filter((entry) => entry.isFile())
-    .map((entry) => ({
-      inputPath: path.join(inputPath, entry.name),
-      filename: entry.name,
-      format: detectFormat(entry.name),
-    }))
-    .filter((file): file is ImageFile => file.format !== null)
-    .sort((left, right) => left.filename.localeCompare(right.filename));
+  const files = (await collectImages(inputPath, "", inputArgument)).sort((left, right) =>
+    left.relativePath.localeCompare(right.relativePath),
+  );
 
   if (!files.length) {
-    throw new AppError(`No ${listExtensions("or")} files found in "${inputArgument}".`);
+    throw new AppError(
+      `No ${listExtensions("or")} files found in "${inputArgument}" or its subdirectories.`,
+    );
   }
 
   return {
@@ -112,6 +112,53 @@ async function resolveDirectoryInput(
       `${path.basename(inputPath)}${OUTPUT_DIR_SUFFIX}`,
     ),
   };
+}
+
+/**
+ * Walks `dirPath` and every nested directory, collecting supported image files.
+ * `relativeDir` is the path from the input root; empty at the top level.
+ */
+async function collectImages(
+  dirPath: string,
+  relativeDir: string,
+  inputArgument: string,
+): Promise<ImageFile[]> {
+  const listedAs = relativeDir ? path.join(inputArgument, relativeDir) : inputArgument;
+  const entries = await readDirectory(dirPath, listedAs);
+  const files: ImageFile[] = [];
+  const directories: Dirent[] = [];
+
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      directories.push(entry);
+      continue;
+    }
+    if (!entry.isFile()) {
+      continue;
+    }
+
+    const format = detectFormat(entry.name);
+    if (format === null) {
+      continue;
+    }
+
+    const relativePath = relativeDir ? path.join(relativeDir, entry.name) : entry.name;
+    files.push({
+      inputPath: path.join(dirPath, entry.name),
+      relativePath,
+      format,
+    });
+  }
+
+  directories.sort((left, right) => left.name.localeCompare(right.name));
+  for (const directory of directories) {
+    const nestedRelative = relativeDir ? path.join(relativeDir, directory.name) : directory.name;
+    files.push(
+      ...(await collectImages(path.join(dirPath, directory.name), nestedRelative, inputArgument)),
+    );
+  }
+
+  return files;
 }
 
 async function statInput(inputPath: string, inputArgument: string): Promise<Stats> {
@@ -144,7 +191,22 @@ async function readDirectory(inputPath: string, inputArgument: string): Promise<
 /** Confirms the file really holds the format its extension claims. */
 async function hasSignature(filePath: string, format: ImageFormat): Promise<boolean> {
   const header = await readHeader(filePath);
-  return format === "webp" ? isWebpHeader(header) : isJpegHeader(header);
+  switch (format) {
+    case "jpeg":
+      return isJpegHeader(header);
+    case "png":
+      return isPngHeader(header);
+    case "webp":
+      return isWebpHeader(header);
+  }
+}
+
+/** Checks for the eight-byte PNG signature. */
+function isPngHeader(header: Buffer): boolean {
+  return (
+    header.length >= PNG_SIGNATURE.length &&
+    header.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)
+  );
 }
 
 /** Checks for the JPEG start-of-image marker (FF D8 FF). */
@@ -173,7 +235,7 @@ async function readHeader(filePath: string): Promise<Buffer> {
   }
 }
 
-/** Renders the supported extensions as `.jpg, .jpeg and .webp`. */
+/** Renders the supported extensions as `.jpg, .jpeg, .png and .webp`. */
 function listExtensions(conjunction: "and" | "or" = "and"): string {
   const last = SUPPORTED_EXTENSIONS[SUPPORTED_EXTENSIONS.length - 1];
   return `${SUPPORTED_EXTENSIONS.slice(0, -1).join(", ")} ${conjunction} ${last}`;

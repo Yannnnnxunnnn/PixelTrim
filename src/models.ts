@@ -2,14 +2,17 @@
  * Formats that can be compressed. Each one has its own encoder, and the output
  * keeps the format of its input.
  */
-export type ImageFormat = "jpeg" | "webp";
+export type ImageFormat = "jpeg" | "png" | "webp";
 
 /** An image file selected for compression. */
 export interface ImageFile {
   /** Absolute path to the source image. */
   readonly inputPath: string;
-  /** File name including its original extension, e.g. `photo.jpeg`. */
-  readonly filename: string;
+  /**
+   * Path relative to the input root, using the platform separator.
+   * For a single file this is the basename, e.g. `photo.jpeg`.
+   */
+  readonly relativePath: string;
   /** Decides which encoder handles the file. */
   readonly format: ImageFormat;
 }

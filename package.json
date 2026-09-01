@@ -1,7 +1,7 @@
 {
   "name": "pixeltrim",
   "version": "1.0.0",
-  "description": "Local image compression CLI: JPEG with MozJPEG, WebP with sharp",
+  "description": "Local image compression CLI: JPEG with MozJPEG, PNG with oxipng, WebP with sharp",
   "type": "module",
   "engines": {
     "node": ">=22.6.0"
@@ -14,6 +14,8 @@
   "keywords": [
     "jpeg",
     "mozjpeg",
+    "png",
+    "oxipng",
     "webp",
     "sharp",
     "compression",
@@ -25,6 +27,7 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
+    "@napi-rs/image": "^1.14.0",
     "sharp": "^0.35.3"
   }
 }
