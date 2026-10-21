@@ -32,13 +32,20 @@ export interface ResolvedInput {
  * How the encoder quality is chosen: either a fixed value, or the lowest value
  * that still looks like the source.
  */
-export type QualitySetting =
-  | { readonly mode: "fixed"; readonly quality: number }
-  | { readonly mode: "auto"; readonly maxQuality: number; readonly minSsim: number };
+export interface AutoQualitySetting {
+  readonly mode: "auto";
+  readonly maxQuality: number;
+  readonly minSsim: number;
+}
+
+export type QualitySetting = { readonly mode: "fixed"; readonly quality: number } | AutoQualitySetting;
 
 /** Encoder settings for a single compression run. */
 export interface CompressionOptions {
+  /** Quality for JPEG and PNG, either fixed or automatic. */
   readonly quality: QualitySetting;
+  /** Quality for WebP, which is always chosen automatically. */
+  readonly webpQuality: AutoQualitySetting;
   readonly outputDir: string;
   /**
    * When true (the CLI default), an encoded file that is larger than its source

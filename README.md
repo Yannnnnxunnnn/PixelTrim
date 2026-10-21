@@ -4,13 +4,13 @@ A command-line tool that compresses JPEG, PNG and WebP images locally. Each file
 
 ## Formats
 
-| Input | Engine | Output |
-| --- | --- | --- |
-| `.jpg`, `.jpeg` | [MozJPEG](https://github.com/mozilla/mozjpeg) (`cjpeg`) | JPEG |
-| `.png` | [oxipng](https://github.com/shssoichiro/oxipng) via [`@napi-rs/image`](https://www.npmjs.com/package/@napi-rs/image) | PNG |
-| `.webp` | [sharp](https://sharp.pixelplumbing.com/)'s native WebP encoder | WebP |
+| Input           | Engine                                                                                                               | Output |
+| --------------- | -------------------------------------------------------------------------------------------------------------------- | ------ |
+| `.jpg`, `.jpeg` | [MozJPEG](https://github.com/mozilla/mozjpeg) (`cjpeg`)                                                              | JPEG   |
+| `.png`          | [oxipng](https://github.com/shssoichiro/oxipng) via [`@napi-rs/image`](https://www.npmjs.com/package/@napi-rs/image) | PNG    |
+| `.webp`         | [sharp](https://sharp.pixelplumbing.com/)'s native WebP encoder                                                      | WebP   |
 
-JPEG needs MozJPEG installed. PNG and WebP only need `npm install`. Mixed directories are fine. PNG is compressed with oxipng. Quality below 100 also tries palette quantization and keeps the smaller file, so `--quality`, `--auto` and `--min-ssim` apply to PNG as well.
+JPEG needs MozJPEG installed. PNG and WebP only need `npm install`. Mixed directories are fine. PNG is compressed with oxipng. Quality below 100 also tries palette quantization and keeps the smaller file. `--quality` and `--no-auto` set JPEG and PNG quality; WebP is always automatic.
 
 ## Requirements
 
@@ -39,11 +39,11 @@ export MOZJPEG_PATH="$(brew --prefix mozjpeg)/bin/cjpeg"
 
 ### Linux
 
-| Distribution | Command |
-| --- | --- |
-| Arch | `yay -S mozjpeg` (AUR) |
-| Any, with conda | `conda install -c conda-forge mozjpeg` |
-| Debian, Ubuntu, Fedora, others | build from source (below) |
+| Distribution                   | Command                                |
+| ------------------------------ | -------------------------------------- |
+| Arch                           | `yay -S mozjpeg` (AUR)                 |
+| Any, with conda                | `conda install -c conda-forge mozjpeg` |
+| Debian, Ubuntu, Fedora, others | build from source (below)              |
 
 ### Windows
 
@@ -83,16 +83,17 @@ npm install
 npm run start -- <file-or-directory> [options]
 ```
 
-By default, quality is chosen per image so the result stays visually close to the original. Pass `--quality` for a fixed value. PNG also tries a lossless oxipng pass and keeps that when it is smaller.
+JPEG and PNG choose their quality per image by default, so the result stays visually close to the original. Pass `--quality` for a fixed value. WebP always chooses its quality automatically. PNG also tries a lossless oxipng pass and keeps that when it is smaller.
 
-| Option | Description |
-| --- | --- |
-| `--quality <1-100>` | Fixed quality, or the upper bound of automatic search (default `85`). PNG uses 100 for lossless-only. |
-| `--no-auto` | Use a fixed quality (`85` unless `--quality` says otherwise) |
-| `--min-ssim <0-1>` | How similar automatic search must stay to the original, default `0.955` |
-| `--output <dir>` | Output directory. Created if it does not exist. |
-| `--allow-larger` | Write the re-encoded file even when it is bigger than the original |
-| `--help`, `-h` | Show usage |
+| Option              | Description                                                                                                      |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `--quality <1-100>` | JPEG and PNG only: fixed quality, or the upper bound of automatic search (default `85`). WebP is not affected.   |
+| `--no-auto`         | JPEG and PNG use a fixed quality (`85` unless `--quality` says otherwise). WebP stays automatic.                 |
+| `--min-ssim <0-1>`  | How similar automatic search must stay to the original, default `0.955`. Applies to WebP and automatic JPEG/PNG. |
+| `--output <dir>`    | Output directory. Created if it does not exist.                                                                  |
+| `--allow-larger`    | Write the re-encoded file even when it is bigger than the original                                               |
+| `--no-progress`     | Hide the progress bar. It is shown by default in a terminal, e.g. `[#####---------------] 5/20`                  |
+| `--help`, `-h`      | Show usage                                                                                                       |
 
 ### Examples
 
@@ -138,8 +139,8 @@ Output is always a directory. Originals are never overwritten. If a name already
 
 ## Scripts
 
-| Script | Purpose |
-| --- | --- |
-| `npm run start -- <input>` | Run the CLI |
-| `npm run typecheck` | Type-check with strict TypeScript |
-| `npm run build` | Emit JavaScript to `dist/` |
+| Script                     | Purpose                           |
+| -------------------------- | --------------------------------- |
+| `npm run start -- <input>` | Run the CLI                       |
+| `npm run typecheck`        | Type-check with strict TypeScript |
+| `npm run build`            | Emit JavaScript to `dist/`        |

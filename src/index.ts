@@ -6,6 +6,7 @@ import { compressImage, ensureOutputDirectory, reductionPercentage } from "./com
 import { AppError, describeError } from "./errors.ts";
 import { resolveInput } from "./input-handler.ts";
 import type {
+  AutoQualitySetting,
   CompressionResult,
   CompressionSummary,
   ImageFile,
@@ -28,13 +29,18 @@ const MIN_QUALITY = 1;
 const MAX_QUALITY = 100;
 const LABEL_WIDTH = 12;
 const HEADER_WIDTH = 9;
+const PROGRESS_BAR_WIDTH = 20;
 const DIVIDER = "=".repeat(40);
 
 interface CliArguments {
   readonly input: string;
+  /** JPEG and PNG quality. */
   readonly quality: QualitySetting;
+  /** WebP quality, always automatic. */
+  readonly webpQuality: AutoQualitySetting;
   readonly outputDir: string | null;
   readonly skipIfLarger: boolean;
+  readonly showProgress: boolean;
 }
 
 /** MozJPEG's encoder, together with the decoder an automatic search needs. */
@@ -58,18 +64,22 @@ Usage:
 Each image keeps its format: .jpg and .jpeg are re-encoded with MozJPEG, .png
 with oxipng, .webp with sharp's WebP encoder.
 
-By default the quality is chosen per image: the lowest value that still looks
-like the original, up to ${DEFAULT_QUALITY}. Pass --quality for a fixed value.
+JPEG and PNG choose their quality per image by default: the lowest value that
+still looks like the original, up to ${DEFAULT_QUALITY}. WebP always chooses automatically.
 PNG also tries a lossless oxipng pass and keeps that when it is smaller.
 
 Options:
-  --quality <1-100>   Use this exact quality instead of choosing one. With
-                      --auto it is the upper bound of the search.
-  --no-auto           Use a fixed quality (${DEFAULT_QUALITY} unless --quality says otherwise)
-  --min-ssim <0-1>    Similarity the automatic search must keep (default: ${DEFAULT_MIN_SSIM})
+  --quality <1-100>   JPEG and PNG: use this exact quality instead of choosing one.
+                      With --auto it is the upper bound of the search. WebP is
+                      not affected.
+  --no-auto           JPEG and PNG use a fixed quality (${DEFAULT_QUALITY} unless --quality says
+                      otherwise). WebP stays automatic.
+  --min-ssim <0-1>    Similarity the automatic search must keep (default: ${DEFAULT_MIN_SSIM}).
+                      Applies to WebP and to automatic JPEG and PNG.
   --output <dir>      Output directory (default: <input>_compressed)
   --allow-larger      Write the re-encoded file even when it is bigger than the
                       original. By default the original is kept instead.
+  --no-progress       Hide the progress bar (shown by default in a terminal)
   --help              Show this help
 
 Examples:
@@ -78,6 +88,7 @@ Examples:
   npm run start -- banner.webp
   npm run start -- ./photos/ --min-ssim 0.99
   npm run start -- photo.jpg --quality 75
+  npm run start -- ./photos/ --no-progress
   npm run start -- ./photos/ --auto --quality 90 --output ./compressed/`;
 
 async function main(argv: readonly string[]): Promise<number> {
@@ -93,17 +104,24 @@ async function main(argv: readonly string[]): Promise<number> {
     parsed.outputDir === null ? input.defaultOutputDir : path.resolve(parsed.outputDir);
   await ensureOutputDirectory(outputDir);
 
-  printHeader(engines, parsed.quality, outputDir, input.files);
+  printHeader(engines, parsed.quality, parsed.webpQuality, outputDir, input.files);
 
   const results: CompressionResult[] = [];
-  for (const file of input.files) {
+  for (const [index, file] of input.files.entries()) {
+    if (parsed.showProgress) {
+      drawProgress(index + 1, input.files.length);
+    }
     const result = await compressImage(file, {
       encoder: engines.jpeg?.encoder ?? null,
       decoder: engines.jpeg?.decoder ?? null,
       quality: parsed.quality,
+      webpQuality: parsed.webpQuality,
       outputDir,
       skipIfLarger: parsed.skipIfLarger,
     });
+    if (parsed.showProgress) {
+      clearProgress();
+    }
     results.push(result);
     printResult(result);
   }
@@ -149,21 +167,29 @@ function parseCliArguments(argv: readonly string[]): CliArguments | null {
     );
   }
 
+  const { quality, webpQuality } = resolveQualitySettings(values);
   return {
     input: positionals[0]!,
-    quality: resolveQualitySetting(values),
+    quality,
+    webpQuality,
     outputDir: values.output ?? null,
     skipIfLarger: values["allow-larger"] !== true,
+    showProgress: values["no-progress"] !== true && Boolean(process.stdout.isTTY),
   };
 }
 
 type CliValues = ReturnType<typeof parseCommandLine>["values"];
 
 /**
- * Quality is chosen automatically unless a fixed value is asked for, either with
- * `--no-auto` or by naming a `--quality` without also passing `--auto`.
+ * JPEG and PNG use a fixed quality when `--no-auto` is given or `--quality` is
+ * named without `--auto`; otherwise they search. WebP always searches with the
+ * default upper bound, so `--quality` never changes it. `--min-ssim` applies to
+ * WebP and to automatic JPEG/PNG.
  */
-function resolveQualitySetting(values: CliValues): QualitySetting {
+function resolveQualitySettings(values: CliValues): {
+  quality: QualitySetting;
+  webpQuality: AutoQualitySetting;
+} {
   const explicitAuto = values.auto === true;
   const noAuto = values["no-auto"] === true;
 
@@ -171,20 +197,17 @@ function resolveQualitySetting(values: CliValues): QualitySetting {
     throw new AppError("--auto and --no-auto cannot be used together.");
   }
 
-  const quality = parseQuality(values.quality);
+  const maxQuality = parseQuality(values.quality);
+  const minSsim = parseMinSsim(values["min-ssim"]);
   const fixed = noAuto || (values.quality !== undefined && !explicitAuto);
 
-  if (fixed) {
-    if (values["min-ssim"] !== undefined) {
-      throw new AppError(
-        "--min-ssim only applies when the quality is chosen automatically.",
-        "Drop --min-ssim, or add --auto to search for a quality up to the value given by --quality.",
-      );
-    }
-    return { mode: "fixed", quality };
-  }
-
-  return { mode: "auto", maxQuality: quality, minSsim: parseMinSsim(values["min-ssim"]) };
+  const quality: QualitySetting = fixed
+    ? { mode: "fixed", quality: maxQuality }
+    : { mode: "auto", maxQuality, minSsim };
+  return {
+    quality,
+    webpQuality: { mode: "auto", maxQuality: DEFAULT_QUALITY, minSsim },
+  };
 }
 
 function parseCommandLine(argv: readonly string[]): ReturnType<typeof parseArgs<typeof config>> {
@@ -198,6 +221,7 @@ function parseCommandLine(argv: readonly string[]): ReturnType<typeof parseArgs<
       "min-ssim": { type: "string" },
       output: { type: "string" },
       "allow-larger": { type: "boolean" },
+      "no-progress": { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
   } as const;
@@ -260,6 +284,7 @@ function summarize(results: readonly CompressionResult[]): CompressionSummary {
 function printHeader(
   engines: Engines,
   quality: QualitySetting,
+  webpQuality: AutoQualitySetting,
   outputDir: string,
   files: readonly ImageFile[],
 ): void {
@@ -270,9 +295,13 @@ function printHeader(
     console.log(`${field("PNG:")}${describePngEngine(engines.png)}`);
   }
   if (engines.webp !== null) {
-    console.log(`${field("WebP:")}${describeWebpEngine(engines.webp)}`);
+    console.log(
+      `${field("WebP:")}${describeWebpEngine(engines.webp)}, quality ${describeAutoQuality(webpQuality)}`,
+    );
   }
-  console.log(`${field("Quality:")}${describeQualitySetting(quality)}`);
+  if (engines.jpeg !== null || engines.png !== null) {
+    console.log(`${field("Quality:")}${describeQualitySetting(quality)}`);
+  }
   console.log(`${field("Output:")}${outputDir}`);
   console.log("");
   console.log(`Processing ${describeImageCount(files)}...`);
@@ -317,9 +346,27 @@ function describeImageCount(files: readonly ImageFile[]): string {
 }
 
 function describeQualitySetting(quality: QualitySetting): string {
-  return quality.mode === "fixed"
-    ? String(quality.quality)
-    : `auto, up to ${quality.maxQuality} (SSIM >= ${quality.minSsim})`;
+  return quality.mode === "fixed" ? String(quality.quality) : describeAutoQuality(quality);
+}
+
+function describeAutoQuality(quality: AutoQualitySetting): string {
+  return `auto, up to ${quality.maxQuality} (SSIM >= ${quality.minSsim})`;
+}
+
+/**
+ * Redraws the progress line in place, e.g. `[#####---------------] 5/20`.
+ * Only called on a terminal, so piped output is not filled with bar redraws.
+ */
+function drawProgress(current: number, total: number): void {
+  const filled = Math.round((current / total) * PROGRESS_BAR_WIDTH);
+  const bar = "#".repeat(filled) + "-".repeat(PROGRESS_BAR_WIDTH - filled);
+  const count = `${String(current).padStart(String(total).length)}/${total}`;
+  process.stdout.write(`\r\x1b[K[${bar}] ${count}`);
+}
+
+/** Removes the progress line so the per-image result can be printed in its place. */
+function clearProgress(): void {
+  process.stdout.write("\r\x1b[K");
 }
 
 function printResult(result: CompressionResult): void {

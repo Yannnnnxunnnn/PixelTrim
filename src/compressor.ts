@@ -14,7 +14,6 @@ import { encodePng } from "./oxipng.ts";
 import { findBestPngQuality } from "./png-quality-search.ts";
 import type { QualitySearchResult } from "./quality-search-core.ts";
 import { findBestQuality } from "./quality-search.ts";
-import { encodeWebp } from "./sharp-webp.ts";
 import { findBestWebpQuality } from "./webp-quality-search.ts";
 
 const MAX_NAME_ATTEMPTS = 1000;
@@ -161,22 +160,13 @@ async function encodeJpegToOutput(
   );
 }
 
-/** WebP path: sharp's native WebP encoder both encodes and decodes. */
+/** WebP path: always an automatic search, using sharp's native WebP encoder. */
 async function encodeWebpToOutput(
   file: ImageFile,
   request: CompressRequest,
   outputPath: string,
 ): Promise<EncodeOutcome> {
-  if (request.quality.mode === "fixed") {
-    await encodeWebp({
-      inputPath: file.inputPath,
-      outputPath,
-      quality: request.quality.quality,
-    });
-    return { quality: request.quality.quality, qualityChoice: null };
-  }
-
-  const { maxQuality, minSsim } = request.quality;
+  const { maxQuality, minSsim } = request.webpQuality;
   return searchQuality(outputPath, (workDir) =>
     findBestWebpQuality({ inputPath: file.inputPath, maxQuality, minSsim, workDir }),
   );
